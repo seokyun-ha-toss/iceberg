@@ -86,6 +86,8 @@ public class IcebergSinkConfig extends AbstractConfig {
   private static final String COMMIT_TIMEOUT_MS_PROP = "iceberg.control.commit.timeout-ms";
   private static final int COMMIT_TIMEOUT_MS_DEFAULT = 30_000;
   private static final String COMMIT_THREADS_PROP = "iceberg.control.commit.threads";
+  private static final String PAUSE_CONSUMER_DURING_COMMIT_PROP =
+      "iceberg.control.commit.pause-consumer-during-commit";
   private static final String CONNECT_GROUP_ID_PROP = "iceberg.connect.group-id";
   private static final String TRANSACTIONAL_PREFIX_PROP =
       "iceberg.coordinator.transactional.prefix";
@@ -217,6 +219,14 @@ public class IcebergSinkConfig extends AbstractConfig {
         Runtime.getRuntime().availableProcessors() * 2,
         Importance.MEDIUM,
         "Coordinator threads to use for table commits, default is (cores * 2)");
+    configDef.define(
+        PAUSE_CONSUMER_DURING_COMMIT_PROP,
+        ConfigDef.Type.BOOLEAN,
+        false,
+        Importance.MEDIUM,
+        "Pause the sink task's source Kafka consumer during each Iceberg commit round (via "
+            + "SinkTaskContext pause/resume) to limit in-memory buffering when commits are slow; "
+            + "workers resume after CommitComplete on successful commit");
     configDef.define(
         TRANSACTIONAL_PREFIX_PROP,
         ConfigDef.Type.STRING,
@@ -417,6 +427,10 @@ public class IcebergSinkConfig extends AbstractConfig {
 
   public int commitThreads() {
     return getInt(COMMIT_THREADS_PROP);
+  }
+
+  public boolean pauseConsumerDuringCommit() {
+    return getBoolean(PAUSE_CONSUMER_DURING_COMMIT_PROP);
   }
 
   public String transactionalPrefix() {
