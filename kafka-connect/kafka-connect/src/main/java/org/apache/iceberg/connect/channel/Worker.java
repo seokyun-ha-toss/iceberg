@@ -27,12 +27,14 @@ import org.apache.iceberg.connect.IcebergSinkConfig;
 import org.apache.iceberg.connect.data.Offset;
 import org.apache.iceberg.connect.data.SinkWriter;
 import org.apache.iceberg.connect.data.SinkWriterResult;
+import org.apache.iceberg.connect.events.CommitComplete;
 import org.apache.iceberg.connect.events.DataComplete;
 import org.apache.iceberg.connect.events.DataWritten;
 import org.apache.iceberg.connect.events.Event;
 import org.apache.iceberg.connect.events.PayloadType;
 import org.apache.iceberg.connect.events.StartCommit;
 import org.apache.iceberg.connect.events.TopicPartitionOffset;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.apache.kafka.connect.sink.SinkTaskContext;
 
@@ -41,6 +43,7 @@ class Worker extends Channel {
   private final IcebergSinkConfig config;
   private final SinkTaskContext context;
   private final SinkWriter sinkWriter;
+  private UUID pausedForCommitId;
 
   Worker(
       IcebergSinkConfig config,
@@ -67,8 +70,22 @@ class Worker extends Channel {
   @Override
   protected boolean receive(Envelope envelope) {
     Event event = envelope.event();
-    if (event.payload().type() != PayloadType.START_COMMIT) {
+    PayloadType payloadType = event.payload().type();
+    if (payloadType == PayloadType.COMMIT_COMPLETE) {
+      if (config.pauseConsumerDuringCommit()) {
+        handleCommitComplete((CommitComplete) event.payload());
+      }
+      return true;
+    }
+
+    if (payloadType != PayloadType.START_COMMIT) {
       return false;
+    }
+
+    UUID commitId = ((StartCommit) event.payload()).commitId();
+    if (config.pauseConsumerDuringCommit()) {
+      context.pause(context.assignment().toArray(new TopicPartition[0]));
+      this.pausedForCommitId = commitId;
     }
 
     SinkWriterResult results = sinkWriter.completeWrite();
@@ -88,8 +105,6 @@ class Worker extends Channel {
                       tp.topic(), tp.partition(), offset.offset(), offset.timestamp());
                 })
             .collect(Collectors.toList());
-
-    UUID commitId = ((StartCommit) event.payload()).commitId();
 
     List<Event> events =
         results.writerResults().stream()
@@ -113,10 +128,25 @@ class Worker extends Channel {
     return true;
   }
 
+  private void handleCommitComplete(CommitComplete payload) {
+    if (pausedForCommitId != null && pausedForCommitId.equals(payload.commitId())) {
+      context.resume(context.assignment().toArray(new TopicPartition[0]));
+      this.pausedForCommitId = null;
+    }
+  }
+
   @Override
   void stop() {
+    resumeSourceIfPaused();
     super.stop();
     sinkWriter.close();
+  }
+
+  private void resumeSourceIfPaused() {
+    if (pausedForCommitId != null) {
+      context.resume(context.assignment().toArray(new TopicPartition[0]));
+      this.pausedForCommitId = null;
+    }
   }
 
   void save(Collection<SinkRecord> sinkRecords) {

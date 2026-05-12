@@ -29,9 +29,10 @@ import org.apache.iceberg.types.Types.UUIDType;
 import org.apache.iceberg.util.DateTimeUtil;
 
 /**
- * A control event payload for events sent by a coordinator that indicates it has completed a commit
- * cycle. Events with this payload are not consumed by the sink, they are informational and can be
- * used by consumers to trigger downstream processes.
+ * A control event payload for events sent by a coordinator that indicates it has completed a
+ * successful commit cycle. Workers listen for this event (when {@code
+ * iceberg.control.commit.pause-consumer-during-commit} is true) to resume the source Kafka
+ * consumer. Other consumers may use this payload as informational to trigger downstream processes.
  */
 public class CommitComplete implements Payload {
 
